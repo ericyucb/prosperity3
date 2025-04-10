@@ -1,8 +1,15 @@
 from datamodel import OrderDepth, UserId, TradingState, Order
 from typing import List
 import string
-#from logger import Logger
-#logger = Logger()
+# from logger import Logger
+# logger = Logger()
+from datamodel import OrderDepth, UserId, TradingState, Order
+from typing import List
+import string
+import jsonpickle
+import numpy as np
+import math
+
 
 
 
@@ -11,7 +18,7 @@ import string
 
 class Product:
     RAINFOREST_RESIN = "RAINFOREST_RESIN"
-    KELP = "KELP"
+    SQUID_INK = "SQUID_INK"
 
 
 PARAMS = {
@@ -23,14 +30,14 @@ PARAMS = {
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
         "join_edge": 2,  # joins orders within this edge
         "default_edge": 2,
-        "soft_position_limit": 30,
+        "soft_position_limit": 20,
     },
-    Product.KELP: {
+    Product.SQUID_INK: {
         "take_width": 1,
         "clear_width": 0,
         "prevent_adverse": True,
         "adverse_volume": 15,
-        "reversion_beta": -0.229,
+        "reversion_beta": -0.2,
         "disregard_edge": 1,
         "join_edge": 0,
         "default_edge": 1,
@@ -47,7 +54,7 @@ class Trader:
             params = PARAMS
         self.params = params
 
-        self.LIMIT = {Product.RAINFOREST_RESIN: 50, Product.KELP: 50}
+        self.LIMIT = {Product.RAINFOREST_RESIN: 50, Product.SQUID_INK: 50}
     
 
     def take_best_orders(
@@ -164,7 +171,7 @@ class Trader:
 
         return buy_order_volume, sell_order_volume
 
-    # def starfruit_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
+    def squid_ink_fair_value(self, order_depth: OrderDepth, traderObject) -> float:
         if len(order_depth.sell_orders) != 0 and len(order_depth.buy_orders) != 0:
             best_ask = min(order_depth.sell_orders.keys())
             best_bid = max(order_depth.buy_orders.keys())
@@ -172,34 +179,34 @@ class Trader:
                 price
                 for price in order_depth.sell_orders.keys()
                 if abs(order_depth.sell_orders[price])
-                >= self.params[Product.STARFRUIT]["adverse_volume"]
+                >= self.params[Product.SQUID_INK]["adverse_volume"]
             ]
             filtered_bid = [
                 price
                 for price in order_depth.buy_orders.keys()
                 if abs(order_depth.buy_orders[price])
-                >= self.params[Product.STARFRUIT]["adverse_volume"]
+                >= self.params[Product.SQUID_INK]["adverse_volume"]
             ]
             mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
             mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
             if mm_ask == None or mm_bid == None:
-                if traderObject.get("starfruit_last_price", None) == None:
+                if traderObject.get("squid_ink_last_price", None) == None:
                     mmmid_price = (best_ask + best_bid) / 2
                 else:
-                    mmmid_price = traderObject["starfruit_last_price"]
+                    mmmid_price = traderObject["squid_ink_last_price"]
             else:
                 mmmid_price = (mm_ask + mm_bid) / 2
 
-            if traderObject.get("starfruit_last_price", None) != None:
-                last_price = traderObject["starfruit_last_price"]
+            if traderObject.get("squid_ink_last_price", None) != None:
+                last_price = traderObject["squid_ink_last_price"]
                 last_returns = (mmmid_price - last_price) / last_price
                 pred_returns = (
-                    last_returns * self.params[Product.STARFRUIT]["reversion_beta"]
+                    last_returns * self.params[Product.SQUID_INK]["reversion_beta"]
                 )
                 fair = mmmid_price + (mmmid_price * pred_returns)
             else:
                 fair = mmmid_price
-            traderObject["starfruit_last_price"] = mmmid_price
+            traderObject["squid_ink_last_price"] = mmmid_price
             return fair
         return None
 
@@ -317,10 +324,14 @@ class Trader:
         return orders, buy_order_volume, sell_order_volume
     
     def run(self, state: TradingState):
+        traderObject = {}
+        if state.traderData != None and state.traderData != "":
+            traderObject = jsonpickle.decode(state.traderData)
+
+        result = {}
         # Only method required. It takes all buy and sell orders for all symbols as an input, and outputs a list of orders to be sent
         print("traderData: " + state.traderData)
         print("Observations: " + str(state.observations))
-        result = {}
 
         if Product.RAINFOREST_RESIN in self.params and Product.RAINFOREST_RESIN in state.order_depths:
             rainforest_resin_position = (
@@ -365,12 +376,62 @@ class Trader:
                 rainforest_resin_take_orders + rainforest_resin_clear_orders + rainforest_resin_make_orders
             )
 
+
+        
+
+        if Product.SQUID_INK in self.params and Product.SQUID_INK in state.order_depths:
+            squid_ink_position = (
+                state.position[Product.SQUID_INK]
+                if Product.SQUID_INK in state.position
+                else 0
+            )
+            squid_ink_fair_value = self.squid_ink_fair_value(
+                state.order_depths[Product.SQUID_INK], traderObject
+            )
+            squid_ink_take_orders, buy_order_volume, sell_order_volume = (
+                self.take_orders(
+                    Product.SQUID_INK,
+                    state.order_depths[Product.SQUID_INK],
+                    squid_ink_fair_value,
+                    self.params[Product.SQUID_INK]["take_width"],
+                    squid_ink_position,
+                    self.params[Product.SQUID_INK]["prevent_adverse"],
+                    self.params[Product.SQUID_INK]["adverse_volume"],
+                )
+            )
+            squid_ink_clear_orders, buy_order_volume, sell_order_volume = (
+                self.clear_orders(
+                    Product.SQUID_INK,
+                    state.order_depths[Product.SQUID_INK],
+                    squid_ink_fair_value,
+                    self.params[Product.SQUID_INK]["clear_width"],
+                    squid_ink_position,
+                    buy_order_volume,
+                    sell_order_volume,
+                )
+            )
+            squid_ink_make_orders, _, _ = self.make_orders(
+                Product.SQUID_INK,
+                state.order_depths[Product.SQUID_INK],
+                squid_ink_fair_value,
+                squid_ink_position,
+                buy_order_volume,
+                sell_order_volume,
+                self.params[Product.SQUID_INK]["disregard_edge"],
+                self.params[Product.SQUID_INK]["join_edge"],
+                self.params[Product.SQUID_INK]["default_edge"],
+            )
+            result[Product.SQUID_INK] = (
+                squid_ink_take_orders + squid_ink_clear_orders + squid_ink_make_orders
+            )
+
     
     
-        traderData = "." # String value holding Trader state data required. It will be delivered as TradingState.traderData on next execution.
         
         conversions = 1
-        #logger.flush(state, result, conversions, traderData)
+        traderData = jsonpickle.encode(traderObject)
+
+        # logger.flush(state, result, conversions, traderData)
 
         return result, conversions, traderData
     
