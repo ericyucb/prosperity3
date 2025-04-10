@@ -1,0 +1,6 @@
+Backtesting /Users/ericyu/Documents/prosperity3/round0/trader.py on round 0 day -2
+KELP: 0
+RAINFOREST_RESIN: 2,494
+Total profit: 2,494
+
+Successfully saved backtest results to backtests/2025-03-26_02-16-47.log
